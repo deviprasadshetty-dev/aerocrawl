@@ -72,20 +72,36 @@ aerocrawl --batch urls.txt --output results.json
 Integrate with Cursor, KiloCode, and other MCP-compatible tools:
 
 ```bash
-# Generate MCP config (one-time setup for Cursor/KiloCode)
-aerocrawl --generate-mcp-config
-
-# Or manually start the MCP server
+# Start the MCP server
 aerocrawl -m mcp
 ```
+
+**MCP Configuration JSON:**
+
+Add this to your MCP settings file:
+
+```json
+{
+  "mcpServers": {
+    "aerocrawl": {
+      "command": "aerocrawl",
+      "args": ["-m", "mcp"]
+    }
+  }
+}
+```
+
+**Cursor:** Add to `~/.cursor/mcp.json` or `.cursor/mcp.json` in your project
+
+**KiloCode:** Add to KiloCode's MCP settings file
 
 **Available MCP Tools:**
 - `scrape` / `extract` / `crawl` / `search` / `agent`
 
-**Cursor Integration:**
-1. Run `aerocrawl --generate-mcp-config`
-2. Open Cursor Settings → MCP → Add Server
-3. Use `@aerocrawl` in Cursor chat
+**Usage in Cursor:**
+```
+@aerocrawl Can you scrape https://example.com and extract the main heading?
+```
 
 ### API Server (Optional)
 Start the HTTP API server for programmatic access:
