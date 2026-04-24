@@ -43,11 +43,16 @@ export interface CrawlSession {
 export class JobQueue {
     private db: Database.Database;
     private dbPath: string;
+    private resultsDir: string;
 
     constructor(dbPath?: string) {
         const dataDir = path.join(process.cwd(), 'data');
+        this.resultsDir = path.join(dataDir, 'results');
         if (!fs.existsSync(dataDir)) {
             fs.mkdirSync(dataDir, { recursive: true });
+        }
+        if (!fs.existsSync(this.resultsDir)) {
+            fs.mkdirSync(this.resultsDir, { recursive: true });
         }
 
         this.dbPath = dbPath || path.join(dataDir, 'aerocrawl.db');
@@ -150,11 +155,18 @@ export class JobQueue {
     }
 
     completeJob(jobId: number, result?: string): void {
+        let dbResult = result;
+        if (result) {
+            const filePath = path.join(this.resultsDir, `${jobId}.json`);
+            fs.writeFileSync(filePath, result, 'utf8');
+            dbResult = JSON.stringify({ file: filePath });
+        }
+
         this.db.prepare(`
             UPDATE jobs 
             SET status = 'completed', result = ?, updated_at = datetime('now')
             WHERE id = ?
-        `).run(result, jobId);
+        `).run(dbResult, jobId);
 
         // Update session processed count
         const job = this.db.prepare(`SELECT crawl_id FROM jobs WHERE id = ?`).get(jobId) as { crawl_id: string };
@@ -223,7 +235,13 @@ export class JobQueue {
         const jobs = this.getCrawlJobs(crawlId);
         const results = jobs
             .filter((job: any) => job.status === 'completed' && job.result)
-            .map((job: any) => JSON.parse(job.result));
+            .map((job: any) => {
+                const parsed = JSON.parse(job.result);
+                if (parsed.file && fs.existsSync(parsed.file)) {
+                    return JSON.parse(fs.readFileSync(parsed.file, 'utf8'));
+                }
+                return parsed;
+            });
 
         return {
             crawlId,

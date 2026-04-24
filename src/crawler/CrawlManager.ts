@@ -4,6 +4,9 @@ import { JobQueue, type CrawlSession, type CrawlJob } from '../queue/JobQueue.js
 import { URLDiscovery } from './URLDiscovery.js';
 import { AIExtractor } from '../extractor/AIExtractor.js';
 import type { CdpAction } from '../browser/CDPBrowser.js';
+import { isSafeUrl } from '../utils.js';
+import pLimit from 'p-limit';
+import fs from 'fs';
 
 export interface CrawlOptions {
     url: string;
@@ -123,13 +126,21 @@ export class CrawlManager {
         const actions: CdpAction[] = session?.actions ? JSON.parse(session.actions) : [];
         const formats: ('markdown' | 'html' | 'screenshot')[] = session?.formats ? JSON.parse(session.formats) : ['markdown'];
 
+        const limit = pLimit(3);
+        const activePromises: Promise<void>[] = [];
+
         try {
             while (this.activeCrawls.get(crawlId)) {
+                if (limit.activeCount >= 3) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    continue;
+                }
+
                 const job = this.jobQueue.getNextJob(crawlId);
 
                 if (!job) {
                     const stats = this.jobQueue.getSessionStats(crawlId);
-                    if (stats.pending === 0 && stats.processing === 0) {
+                    if (stats.pending === 0 && stats.processing === 0 && limit.activeCount === 0) {
                         this.jobQueue.completeCrawlSession(crawlId);
                         console.log(`[CrawlManager] ${crawlId} completed`);
                         
@@ -146,45 +157,53 @@ export class CrawlManager {
                     continue;
                 }
 
-                try {
-                    // Fetch with options
-                    const fetchOptions: FetchOptions = {
-                        actions,
-                        formats
-                    };
-                    const { html, screenshot } = await this.fetcher.fetchWithOptions(job.url, fetchOptions);
+                const p = limit(async () => {
+                    try {
+                        // Fetch with options
+                        const fetchOptions: FetchOptions = {
+                            actions,
+                            formats
+                        };
+                        const { html, screenshot } = await this.fetcher.fetchWithOptions(job.url, fetchOptions);
 
-                    const result: any = { url: job.url };
+                        const result: any = { url: job.url };
 
-                    // Add formats
-                    if (formats.includes('html')) {
-                        result.html = html;
-                    }
-
-                    if (formats.includes('markdown')) {
-                        result.markdown = this.parser.process(html, job.url);
-                    }
-
-                    if (formats.includes('screenshot') && screenshot) {
-                        result.screenshot = screenshot.toString('base64');
-                    }
-
-                    // Optionally extract structured data
-                    if (extractor && result.markdown) {
-                        try {
-                            const extractionResult = await extractor.extract(result.markdown);
-                            result.extracted = extractionResult.data;
-                        } catch (err: any) {
-                            console.error(`[CrawlManager] Extraction failed for ${job.url}:`, err);
+                        // Add formats
+                        if (formats.includes('html')) {
+                            result.html = html;
                         }
-                    }
 
-                    this.jobQueue.completeJob(job.id, JSON.stringify(result));
-                } catch (error: any) {
-                    console.error(`[CrawlManager] Failed to process ${job.url}:`, error);
-                    this.jobQueue.failJob(job.id, error.message);
-                }
+                        if (formats.includes('markdown')) {
+                            result.markdown = this.parser.process(html, job.url);
+                        }
+
+                        if (formats.includes('screenshot') && screenshot) {
+                            result.screenshot = screenshot.toString('base64');
+                        }
+
+                        // Optionally extract structured data
+                        if (extractor && result.markdown) {
+                            try {
+                                const extractionResult = await extractor.extract(result.markdown);
+                                result.extracted = extractionResult.data;
+                            } catch (err: any) {
+                                console.error(`[CrawlManager] Extraction failed for ${job.url}:`, err);
+                            }
+                        }
+
+                        this.jobQueue.completeJob(job.id, JSON.stringify(result));
+                    } catch (error: any) {
+                        console.error(`[CrawlManager] Failed to process ${job.url}:`, error);
+                        this.jobQueue.failJob(job.id, error.message);
+                    }
+                });
+
+                const pWrapper = p.finally(() => {
+                    activePromises.splice(activePromises.indexOf(pWrapper), 1);
+                });
+                activePromises.push(pWrapper);
             }
+            await Promise.all(activePromises);
         } finally {
             this.activeCrawls.delete(crawlId);
         }
@@ -211,7 +230,13 @@ export class CrawlManager {
         const jobs = this.jobQueue.getCrawlJobs(crawlId);
         const results = jobs
             .filter((job: CrawlJob) => job.status === 'completed' && job.result)
-            .map((job: CrawlJob) => JSON.parse(job.result!));
+            .map((job: CrawlJob) => {
+                const parsed = JSON.parse(job.result!);
+                if (parsed.file && fs.existsSync(parsed.file)) {
+                    return JSON.parse(fs.readFileSync(parsed.file, 'utf8'));
+                }
+                return parsed;
+            });
 
         return { ...status, results };
     }
@@ -226,6 +251,10 @@ export class CrawlManager {
     }
 
     private async triggerWebhook(webhookUrl: string, crawlId: string): Promise<void> {
+        if (!isSafeUrl(webhookUrl)) {
+            console.error(`[CrawlManager] SSRF Protection: Unsafe webhook URL (${webhookUrl}).`);
+            return;
+        }
         try {
             console.log(`[CrawlManager] Triggering webhook for ${crawlId}`);
             const payload = this.jobQueue.getCrawlResultsForWebhook(crawlId);

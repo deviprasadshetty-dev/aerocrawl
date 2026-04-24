@@ -97,7 +97,7 @@ export class CDPBrowser extends EventEmitter {
                         await session.client.Runtime.evaluate({
                             expression: `
                                 (function() {
-                                    const el = document.querySelector('${action.selector}');
+                                    const el = document.querySelector(${JSON.stringify(action.selector)});
                                     if (el) el.click();
                                     return !!el;
                                 })()
@@ -108,9 +108,9 @@ export class CDPBrowser extends EventEmitter {
                         await session.client.Runtime.evaluate({
                             expression: `
                                 (function() {
-                                    const el = document.querySelector('${action.selector}');
+                                    const el = document.querySelector(${JSON.stringify(action.selector)});
                                     if (el) {
-                                        el.value = '${action.text.replace(/'/g, "\\'")}';
+                                        el.value = ${JSON.stringify(action.text)};
                                         el.dispatchEvent(new Event('input', { bubbles: true }));
                                         return true;
                                     }
@@ -136,19 +136,31 @@ export class CDPBrowser extends EventEmitter {
                         break;
                     case 'waitForSelector':
                         const timeout = action.timeout || 5000;
-                        const startTime = Date.now();
-                        let found = false;
-                        while (Date.now() - startTime < timeout) {
-                            const result = await session.client.Runtime.evaluate({
-                                expression: `!!document.querySelector('${action.selector}')`
-                            });
-                            if (result.result.value) {
-                                found = true;
-                                break;
-                            }
-                            await new Promise(r => setTimeout(r, 100));
+                        const result = await session.client.Runtime.evaluate({
+                            expression: `
+                                new Promise((resolve, reject) => {
+                                    const selector = ${JSON.stringify(action.selector)};
+                                    if (document.querySelector(selector)) {
+                                        return resolve(true);
+                                    }
+                                    const observer = new MutationObserver((mutations, obs) => {
+                                        if (document.querySelector(selector)) {
+                                            obs.disconnect();
+                                            resolve(true);
+                                        }
+                                    });
+                                    observer.observe(document.body, { childList: true, subtree: true });
+                                    setTimeout(() => {
+                                        observer.disconnect();
+                                        resolve(false);
+                                    }, ${timeout});
+                                })
+                            `,
+                            awaitPromise: true
+                        });
+                        if (!result.result.value) {
+                            throw new Error(`Selector ${action.selector} not found within ${timeout}ms`);
                         }
-                        if (!found) throw new Error(`Selector ${action.selector} not found within ${timeout}ms`);
                         break;
                     case 'wait':
                         await new Promise(r => setTimeout(r, action.ms));

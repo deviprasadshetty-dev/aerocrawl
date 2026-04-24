@@ -1,5 +1,6 @@
 import { CDPBrowser, type CdpAction } from '../browser/CDPBrowser.js';
 import { createRequire } from 'module';
+import { isSafeUrl } from '../utils.js';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 
@@ -28,6 +29,9 @@ export class SmartFetcher {
     }
 
     async fetch(url: string, retryCount: number = 0): Promise<string> {
+        if (!isSafeUrl(url)) {
+            throw new Error(`SSRF Protection: Unsafe or local URL detected (${url}).`);
+        }
         try {
             console.log(`[SmartFetcher] Attempting fast HTTP GET for ${url} (attempt ${retryCount + 1})`);
             const response = await globalThis.fetch(url, {

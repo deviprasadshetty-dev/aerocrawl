@@ -1,5 +1,5 @@
 import { SmartFetcher } from '../fetcher/SmartFetcher.js';
-import { JSDOM } from 'jsdom';
+import * as cheerio from 'cheerio';
 
 export interface DiscoveredURLs {
     sitemapUrls: string[];
@@ -93,25 +93,22 @@ export class URLDiscovery {
         const urls: string[] = [];
         
         try {
-            const dom = new JSDOM(xmlContent, { contentType: 'text/xml' });
-            const doc = dom.window.document;
+            const $ = cheerio.load(xmlContent, { xmlMode: true });
             
             // Handle sitemap index
-            const sitemapElements = doc.querySelectorAll('sitemap loc');
-            if (sitemapElements.length > 0) {
+            if ($('sitemap loc').length > 0) {
                 // This is a sitemap index, we'd need to fetch nested sitemaps
                 // For simplicity, skip nested sitemaps for now
                 return urls;
             }
             
             // Handle regular sitemap
-            const urlElements = doc.querySelectorAll('url loc');
-            for (const elem of urlElements) {
-                const url = elem.textContent?.trim();
+            $('url loc').each((_, elem) => {
+                const url = $(elem).text().trim();
                 if (url && this.isValidUrl(url)) {
                     urls.push(url);
                 }
-            }
+            });
         } catch (error) {
             console.error('Failed to parse XML sitemap:', error);
         }
@@ -123,22 +120,20 @@ export class URLDiscovery {
         const links = new Set<string>();
         
         try {
-            const dom = new JSDOM(html, { url: baseUrl.toString() });
-            const doc = dom.window.document;
+            const $ = cheerio.load(html);
             
-            const anchorElements = doc.querySelectorAll('a[href]');
-            for (const anchor of anchorElements) {
-                const href = (anchor as HTMLAnchorElement).href;
+            $('a[href]').each((_, elem) => {
+                const href = $(elem).attr('href');
                 if (href) {
                     try {
-                        const url = new URL(href);
+                        const url = new URL(href, baseUrl.toString());
                         // Remove hash and search params for deduplication
                         links.add(`${url.origin}${url.pathname}`);
                     } catch {
                         // Invalid URL, skip
                     }
                 }
-            }
+            });
         } catch (error) {
             console.error('Failed to extract links from HTML:', error);
         }
