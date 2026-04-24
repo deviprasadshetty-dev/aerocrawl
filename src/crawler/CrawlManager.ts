@@ -1,0 +1,254 @@
+import { SmartFetcher, type FetchOptions } from '../fetcher/SmartFetcher.js';
+import { MarkdownPipeline } from '../parser/MarkdownPipeline.js';
+import { JobQueue, type CrawlSession, type CrawlJob } from '../queue/JobQueue.js';
+import { URLDiscovery } from './URLDiscovery.js';
+import { AIExtractor } from '../extractor/AIExtractor.js';
+import type { CdpAction } from '../browser/CDPBrowser.js';
+
+export interface CrawlOptions {
+    url: string;
+    maxUrls?: number;
+    extract?: boolean;
+    llmConfig?: {
+        provider: 'openai' | 'anthropic' | 'ollama';
+        apiKey?: string;
+        model?: string;
+    };
+    actions?: CdpAction[];
+    formats?: ('markdown' | 'html' | 'screenshot')[];
+    webhookUrl?: string;
+}
+
+export interface BatchScrapeOptions {
+    urls: string[];
+    actions?: CdpAction[];
+    formats?: ('markdown' | 'html' | 'screenshot')[];
+    extract?: boolean;
+    llmConfig?: any;
+    webhookUrl?: string;
+}
+
+export interface CrawlResult {
+    crawlId: string;
+    status: string;
+    totalUrls: number;
+    processedUrls: number;
+    results?: Array<{
+        url: string;
+        markdown?: string;
+        html?: string;
+        screenshot?: string;
+        extracted?: any;
+        error?: string;
+    }>;
+}
+
+export class CrawlManager {
+    private jobQueue: JobQueue;
+    private fetcher: SmartFetcher;
+    private parser: MarkdownPipeline;
+    private urlDiscovery: URLDiscovery;
+    private activeCrawls: Map<string, boolean>;
+
+    constructor() {
+        this.jobQueue = new JobQueue();
+        this.fetcher = new SmartFetcher();
+        this.parser = new MarkdownPipeline();
+        this.urlDiscovery = new URLDiscovery(this.fetcher);
+        this.activeCrawls = new Map();
+    }
+
+    async init(): Promise<void> {
+        await this.fetcher.init();
+    }
+
+    async startCrawl(options: CrawlOptions): Promise<string> {
+        const { url, maxUrls = 100, extract = false, llmConfig, actions, formats } = options;
+
+        // Create crawl session with actions and formats
+        const crawlId = this.jobQueue.createCrawlSession(
+            url,
+            actions ? JSON.stringify(actions) : undefined,
+            formats ? JSON.stringify(formats) : undefined
+        );
+
+        // Discover URLs
+        console.log(`[CrawlManager] Discovering URLs for ${url}`);
+        const discoveredUrls = await this.urlDiscovery.discover(url, maxUrls);
+
+        // Add URLs to queue
+        this.jobQueue.addJobs(crawlId, discoveredUrls);
+        console.log(`[CrawlManager] Added ${discoveredUrls.length} URLs to queue for crawl ${crawlId}`);
+
+        // Start processing (async)
+        this.processCrawl(crawlId, extract, llmConfig).catch(err => {
+            console.error(`[CrawlManager] Crawl ${crawlId} failed:`, err);
+        });
+
+        return crawlId;
+    }
+
+    async startBatchScrape(options: BatchScrapeOptions): Promise<string> {
+        const { urls, actions, formats, extract = false, llmConfig } = options;
+
+        // Create batch session
+        const batchId = this.jobQueue.createCrawlSession(
+            'batch',
+            actions ? JSON.stringify(actions) : undefined,
+            formats ? JSON.stringify(formats) : undefined
+        );
+
+        // Add all URLs to queue
+        this.jobQueue.addJobs(batchId, urls);
+        console.log(`[CrawlManager] Added ${urls.length} URLs to batch ${batchId}`);
+
+        // Start processing
+        this.processCrawl(batchId, extract, llmConfig).catch(err => {
+            console.error(`[CrawlManager] Batch ${batchId} failed:`, err);
+        });
+
+        return batchId;
+    }
+
+    private async processCrawl(crawlId: string, extract: boolean, llmConfig?: any): Promise<void> {
+        this.activeCrawls.set(crawlId, true);
+        let extractor: AIExtractor | undefined;
+
+        if (extract && llmConfig) {
+            extractor = new AIExtractor(llmConfig);
+        }
+
+        // Get session actions and formats
+        const session = this.jobQueue.getCrawlSession(crawlId);
+        const actions: CdpAction[] = session?.actions ? JSON.parse(session.actions) : [];
+        const formats: ('markdown' | 'html' | 'screenshot')[] = session?.formats ? JSON.parse(session.formats) : ['markdown'];
+
+        try {
+            while (this.activeCrawls.get(crawlId)) {
+                const job = this.jobQueue.getNextJob(crawlId);
+
+                if (!job) {
+                    const stats = this.jobQueue.getSessionStats(crawlId);
+                    if (stats.pending === 0 && stats.processing === 0) {
+                        this.jobQueue.completeCrawlSession(crawlId);
+                        console.log(`[CrawlManager] ${crawlId} completed`);
+                        
+                        // Trigger webhook if configured
+                        const webhookUrl = this.jobQueue.getWebhookUrl(crawlId);
+                        if (webhookUrl) {
+                            this.triggerWebhook(webhookUrl, crawlId);
+                        }
+                        
+                        break;
+                    }
+                    
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    continue;
+                }
+
+                try {
+                    // Fetch with options
+                    const fetchOptions: FetchOptions = {
+                        actions,
+                        formats
+                    };
+                    const { html, screenshot } = await this.fetcher.fetchWithOptions(job.url, fetchOptions);
+
+                    const result: any = { url: job.url };
+
+                    // Add formats
+                    if (formats.includes('html')) {
+                        result.html = html;
+                    }
+
+                    if (formats.includes('markdown')) {
+                        result.markdown = this.parser.process(html, job.url);
+                    }
+
+                    if (formats.includes('screenshot') && screenshot) {
+                        result.screenshot = screenshot.toString('base64');
+                    }
+
+                    // Optionally extract structured data
+                    if (extractor && result.markdown) {
+                        try {
+                            const extractionResult = await extractor.extract(result.markdown);
+                            result.extracted = extractionResult.data;
+                        } catch (err: any) {
+                            console.error(`[CrawlManager] Extraction failed for ${job.url}:`, err);
+                        }
+                    }
+
+                    this.jobQueue.completeJob(job.id, JSON.stringify(result));
+                } catch (error: any) {
+                    console.error(`[CrawlManager] Failed to process ${job.url}:`, error);
+                    this.jobQueue.failJob(job.id, error.message);
+                }
+            }
+        } finally {
+            this.activeCrawls.delete(crawlId);
+        }
+    }
+
+    getCrawlStatus(crawlId: string): CrawlResult | undefined {
+        const session = this.jobQueue.getCrawlSession(crawlId);
+        if (!session) return undefined;
+
+        const stats = this.jobQueue.getSessionStats(crawlId);
+
+        return {
+            crawlId: session.id,
+            status: session.status,
+            totalUrls: session.totalUrls,
+            processedUrls: session.processedUrls
+        };
+    }
+
+    getCrawlResults(crawlId: string): CrawlResult | undefined {
+        const status = this.getCrawlStatus(crawlId);
+        if (!status) return undefined;
+
+        const jobs = this.jobQueue.getCrawlJobs(crawlId);
+        const results = jobs
+            .filter((job: CrawlJob) => job.status === 'completed' && job.result)
+            .map((job: CrawlJob) => JSON.parse(job.result!));
+
+        return { ...status, results };
+    }
+
+    async mapSite(url: string, maxUrls: number = 100): Promise<string[]> {
+        const discovery = new URLDiscovery(this.fetcher);
+        return await discovery.discover(url, maxUrls);
+    }
+
+    stopCrawl(crawlId: string): void {
+        this.activeCrawls.delete(crawlId);
+    }
+
+    private async triggerWebhook(webhookUrl: string, crawlId: string): Promise<void> {
+        try {
+            console.log(`[CrawlManager] Triggering webhook for ${crawlId}`);
+            const payload = this.jobQueue.getCrawlResultsForWebhook(crawlId);
+            
+            await fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    event: 'crawl.completed',
+                    data: payload
+                }),
+                signal: AbortSignal.timeout(10000)
+            });
+            
+            console.log(`[CrawlManager] Webhook sent successfully`);
+        } catch (error: any) {
+            console.error(`[CrawlManager] Webhook failed:`, error.message);
+        }
+    }
+
+    close(): void {
+        this.activeCrawls.clear();
+        this.jobQueue.close();
+        this.fetcher.close();
+    }
+}
