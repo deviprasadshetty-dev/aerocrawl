@@ -44,6 +44,7 @@ export class SmartFetcher {
             if (!response.ok) {
                 if (response.status === 403 || response.status === 503) {
                     console.log(`[SmartFetcher] Bot protection detected (${response.status}). Falling back to CDP.`);
+                    await this.ensureInitialized();
                     return await this.fetchWithCDP(url);
                 }
                 throw new Error(`HTTP Error: ${response.status}`);
@@ -64,6 +65,7 @@ export class SmartFetcher {
 
             if (this.needsRendering(html)) {
                 console.log(`[SmartFetcher] SPA detected. Falling back to CDP.`);
+                await this.ensureInitialized();
                 return await this.fetchWithCDP(url);
             }
 
@@ -79,17 +81,27 @@ export class SmartFetcher {
             }
             
             console.log(`[SmartFetcher] All retries failed, falling back to CDP.`);
+            await this.ensureInitialized();
             return await this.fetchWithCDP(url);
         }
     }
 
+    private async ensureInitialized() {
+        if (!this.cdpBrowser['isInitialized']) {
+            await this.cdpBrowser.init();
+        }
+    }
+
     private async fetchWithCDP(url: string): Promise<string> {
-        const session = await this.cdpBrowser.createPageSession();
+        const session = await this.cdpBrowser.acquirePage();
         try {
             await this.cdpBrowser.navigate(session, url);
-            return await this.cdpBrowser.getDOM(session);
-        } finally {
-            await this.cdpBrowser.closePageSession(session);
+            const html = await this.cdpBrowser.getDOM(session);
+            this.cdpBrowser.releasePage(session);
+            return html;
+        } catch (err) {
+            this.cdpBrowser.releasePage(session);
+            throw err;
         }
     }
 
@@ -102,7 +114,7 @@ export class SmartFetcher {
             return { html };
         }
 
-        const session = await this.cdpBrowser.createPageSession();
+        const session = await this.cdpBrowser.acquirePage();
         try {
             await this.cdpBrowser.navigate(session, url);
             
@@ -120,9 +132,11 @@ export class SmartFetcher {
                 }
             }
 
+            this.cdpBrowser.releasePage(session);
             return result;
-        } finally {
-            await this.cdpBrowser.closePageSession(session);
+        } catch (err) {
+            this.cdpBrowser.releasePage(session);
+            throw err;
         }
     }
 
@@ -135,6 +149,9 @@ export class SmartFetcher {
     }
 
     async close() {
-        await this.cdpBrowser.close();
+        // Only close if initialized
+        if (this.cdpBrowser['isInitialized']) {
+            await this.cdpBrowser.close();
+        }
     }
 }

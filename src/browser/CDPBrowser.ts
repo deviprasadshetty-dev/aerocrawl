@@ -3,6 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import os from 'os';
 import fs from 'fs';
 import { EventEmitter } from 'events';
+import net from 'net';
 
 export type CdpAction =
     | { type: 'click'; selector: string }
@@ -25,6 +26,36 @@ export class CDPBrowser extends EventEmitter {
     private port: number = 9222;
     private browserClient: any = null;
     private isInitialized: boolean = false;
+    private pagePool: PageSession[] = [];
+    private maxPoolSize: number = 3;
+
+    // Check if a port is in use
+    private async isPortInUse(port: number): Promise<boolean> {
+        return new Promise((resolve) => {
+            const server = net.createServer();
+            server.once('error', () => resolve(true));
+            server.once('listening', () => {
+                server.close();
+                resolve(false);
+            });
+            server.listen(port, '127.0.0.1');
+        });
+    }
+
+    // Wait for CDP to be ready
+    private async waitForCDP(timeout: number = 10000): Promise<void> {
+        const start = Date.now();
+        while (Date.now() - start < timeout) {
+            try {
+                const client = await CDP({ port: this.port });
+                await client.close();
+                return;
+            } catch {
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+        throw new Error('CDP not ready within timeout');
+    }
 
     async init() {
         if (this.isInitialized) return;
@@ -45,6 +76,22 @@ export class CDPBrowser extends EventEmitter {
             throw new Error(`Browser executable not found at ${executablePath}`);
         }
 
+        // Check if browser is already running on port
+        const portInUse = await this.isPortInUse(this.port);
+        
+        if (portInUse) {
+            console.log(`Browser already running on port ${this.port}, reusing...`);
+            try {
+                await this.waitForCDP(5000);
+                this.browserClient = await CDP({ port: this.port });
+                this.isInitialized = true;
+                console.log('Connected to existing browser via CDP.');
+                return;
+            } catch (err) {
+                console.log(`Failed to connect to existing browser: ${err}. Launching new instance...`);
+            }
+        }
+
         console.log(`Launching browser from: ${executablePath}`);
 
         this.browserProcess = spawn(executablePath, [
@@ -57,7 +104,8 @@ export class CDPBrowser extends EventEmitter {
             '--blink-settings=imagesEnabled=false'
         ]);
 
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait for CDP to be ready
+        await this.waitForCDP();
         this.browserClient = await CDP({ port: this.port });
         this.isInitialized = true;
         console.log('Browser launched and CDP ready.');
@@ -77,6 +125,31 @@ export class CDPBrowser extends EventEmitter {
         ]);
 
         return { client, targetId, browserClient: this.browserClient };
+    }
+
+    // Get a page from the pool or create a new one
+    async acquirePage(): Promise<PageSession> {
+        // Lazy initialization
+        if (!this.isInitialized) {
+            await this.init();
+        }
+        
+        if (this.pagePool.length > 0) {
+            const session = this.pagePool.pop()!;
+            return session;
+        }
+        return await this.createPageSession();
+    }
+
+    // Return a page to the pool
+    releasePage(session: PageSession) {
+        if (this.pagePool.length < this.maxPoolSize) {
+            this.pagePool.push(session);
+        } else {
+            // Pool is full, close the page
+            session.client.close().catch(() => {});
+            this.browserClient.Target.closeTarget({ targetId: session.targetId }).catch(() => {});
+        }
     }
 
     async closePageSession(session: PageSession) {
@@ -202,6 +275,15 @@ export class CDPBrowser extends EventEmitter {
     }
 
     async close() {
+        // Close all pages in pool
+        for (const session of this.pagePool) {
+            try {
+                await session.client.close();
+                await this.browserClient?.Target.closeTarget({ targetId: session.targetId });
+            } catch {}
+        }
+        this.pagePool = [];
+
         if (this.browserClient) {
             await this.browserClient.close();
         }

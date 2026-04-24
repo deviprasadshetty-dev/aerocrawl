@@ -11,6 +11,7 @@ import { startMCPServer, generateMCPConfig } from './mcp/MCPServer.js';
 import type { CdpAction } from './browser/CDPBrowser.js';
 import fs from 'fs';
 import path from 'path';
+import 'dotenv/config';
 
 function getLLMConfig(options: any) {
     if (!options.provider && !process.env.LLM_PROVIDER) return undefined;

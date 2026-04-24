@@ -70,6 +70,7 @@ export class JobQueue {
                 processed_urls INTEGER DEFAULT 0,
                 actions TEXT,
                 formats TEXT,
+                webhook_url TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
             );

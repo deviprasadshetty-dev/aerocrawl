@@ -62,7 +62,8 @@ export class CrawlManager {
     }
 
     async init(): Promise<void> {
-        await this.fetcher.init();
+        // Lazy initialization - don't launch browser here
+        // Browser will be launched on first CDP operation via acquirePage()
     }
 
     async startCrawl(options: CrawlOptions): Promise<string> {
