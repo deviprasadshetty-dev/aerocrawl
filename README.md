@@ -2,7 +2,6 @@
 
 A lightweight, high-performance web scraping and crawling engine — a modern alternative to Firecrawl. Converts websites to LLM-ready markdown, extracts structured data with AI, and uses Chrome DevTools Protocol (CDP) for zero-dependency browser automation.
 
-[![npm version](https://img.shields.io/npm/v/aerocrawl?style=flat-square)](https://www.npmjs.com/package/aerocrawl)
 [![License](https://img.shields.io/badge/license-ISC-blue?style=flat-square)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/deviprasadshetty-dev/aerocrawl?style=flat-square)](https://github.com/deviprasadshetty-dev/aerocrawl)
 
@@ -101,12 +100,46 @@ node dist/cli.js serve
 
 ## Installation
 
-```bash
-# Global install (recommended for CLI use)
-npm install -g aerocrawl
+AeroCrawl is not published to the npm registry. Install directly from GitHub:
 
-# Local install (for project integration)
-npm install aerocrawl
+### Prerequisites
+- Node.js ≥ 18
+- Git
+- Chrome or Edge (CDP uses your system browser)
+
+### Quick Install Scripts
+
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/deviprasadshetty-dev/aerocrawl.git; cd aerocrawl; npm install; npm run build; npm link
+```
+
+**Mac/Linux (bash/zsh):**
+```bash
+git clone https://github.com/deviprasadshetty-dev/aerocrawl.git && cd aerocrawl && npm install && npm run build && npm link
+```
+
+### Step-by-Step
+1. Clone the repo:
+   ```bash
+   git clone https://github.com/deviprasadshetty-dev/aerocrawl.git
+   ```
+2. Install dependencies:
+   ```bash
+   cd aerocrawl && npm install
+   ```
+3. Build:
+   ```bash
+   npm run build
+   ```
+4. Link globally (optional):
+   ```bash
+   npm link
+   ```
+
+### Local Project Use
+```bash
+npm install github:deviprasadshetty-dev/aerocrawl
 ```
 
 **Prerequisites:**
