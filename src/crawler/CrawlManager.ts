@@ -1,4 +1,4 @@
-import { SmartFetcher, type FetchOptions } from '../fetcher/SmartFetcher.js';
+import { SmartFetcher, type FetchOptions, type FetchHooks } from '../fetcher/SmartFetcher.js';
 import { MarkdownPipeline } from '../parser/MarkdownPipeline.js';
 import { JobQueue, type CrawlSession, type CrawlJob } from '../queue/JobQueue.js';
 import { URLDiscovery } from './URLDiscovery.js';
@@ -8,18 +8,25 @@ import { isSafeUrl } from '../utils.js';
 import pLimit from 'p-limit';
 import fs from 'fs';
 
+export interface CrawlHooks extends FetchHooks {
+    onPageParsed?: (url: string, markdown: string) => Promise<string>;
+    onCrawlComplete?: (results: CrawlResult) => Promise<void>;
+}
+
 export interface CrawlOptions {
     url: string;
     maxUrls?: number;
     extract?: boolean;
     llmConfig?: {
-        provider: 'openai' | 'anthropic' | 'ollama';
+        provider: 'openai' | 'anthropic' | 'ollama' | 'openrouter';
         apiKey?: string;
         model?: string;
+        baseUrl?: string;
     };
     actions?: CdpAction[];
     formats?: ('markdown' | 'html' | 'screenshot')[];
     webhookUrl?: string;
+    hooks?: CrawlHooks;
 }
 
 export interface BatchScrapeOptions {
@@ -29,6 +36,7 @@ export interface BatchScrapeOptions {
     extract?: boolean;
     llmConfig?: any;
     webhookUrl?: string;
+    hooks?: CrawlHooks;
 }
 
 export interface CrawlResult {
@@ -41,6 +49,7 @@ export interface CrawlResult {
         markdown?: string;
         html?: string;
         screenshot?: string;
+        actionResults?: Record<string, string>;
         extracted?: any;
         error?: string;
     }>;
@@ -67,7 +76,7 @@ export class CrawlManager {
     }
 
     async startCrawl(options: CrawlOptions): Promise<string> {
-        const { url, maxUrls = 100, extract = false, llmConfig, actions, formats } = options;
+        const { url, maxUrls = 100, extract = false, llmConfig, actions, formats, hooks } = options;
 
         // Create crawl session with actions and formats
         const crawlId = this.jobQueue.createCrawlSession(
@@ -85,7 +94,7 @@ export class CrawlManager {
         console.log(`[CrawlManager] Added ${discoveredUrls.length} URLs to queue for crawl ${crawlId}`);
 
         // Start processing (async)
-        this.processCrawl(crawlId, extract, llmConfig).catch(err => {
+        this.processCrawl(crawlId, extract, llmConfig, hooks).catch(err => {
             console.error(`[CrawlManager] Crawl ${crawlId} failed:`, err);
         });
 
@@ -93,7 +102,7 @@ export class CrawlManager {
     }
 
     async startBatchScrape(options: BatchScrapeOptions): Promise<string> {
-        const { urls, actions, formats, extract = false, llmConfig } = options;
+        const { urls, actions, formats, extract = false, llmConfig, hooks } = options;
 
         // Create batch session
         const batchId = this.jobQueue.createCrawlSession(
@@ -107,14 +116,14 @@ export class CrawlManager {
         console.log(`[CrawlManager] Added ${urls.length} URLs to batch ${batchId}`);
 
         // Start processing
-        this.processCrawl(batchId, extract, llmConfig).catch(err => {
+        this.processCrawl(batchId, extract, llmConfig, hooks).catch(err => {
             console.error(`[CrawlManager] Batch ${batchId} failed:`, err);
         });
 
         return batchId;
     }
 
-    private async processCrawl(crawlId: string, extract: boolean, llmConfig?: any): Promise<void> {
+    private async processCrawl(crawlId: string, extract: boolean, llmConfig?: any, hooks?: CrawlHooks): Promise<void> {
         this.activeCrawls.set(crawlId, true);
         let extractor: AIExtractor | undefined;
 
@@ -145,6 +154,11 @@ export class CrawlManager {
                         this.jobQueue.completeCrawlSession(crawlId);
                         console.log(`[CrawlManager] ${crawlId} completed`);
                         
+                        const fullResults = this.getCrawlResults(crawlId);
+                        if (fullResults && hooks?.onCrawlComplete) {
+                            await hooks.onCrawlComplete(fullResults);
+                        }
+
                         // Trigger webhook if configured
                         const webhookUrl = this.jobQueue.getWebhookUrl(crawlId);
                         if (webhookUrl) {
@@ -160,14 +174,19 @@ export class CrawlManager {
 
                 const p = limit(async () => {
                     try {
-                        // Fetch with options
+                        // Fetch with options and hooks
                         const fetchOptions: FetchOptions = {
                             actions,
-                            formats
+                            formats,
+                            ...(hooks ? { hooks } : {})
                         };
-                        const { html, screenshot } = await this.fetcher.fetchWithOptions(job.url, fetchOptions);
+                        const { html, screenshot, actionResults } = await this.fetcher.fetchWithOptions(job.url, fetchOptions);
 
                         const result: any = { url: job.url };
+
+                        if (actionResults) {
+                            result.actionResults = actionResults;
+                        }
 
                         // Add formats
                         if (formats.includes('html')) {
@@ -175,7 +194,12 @@ export class CrawlManager {
                         }
 
                         if (formats.includes('markdown')) {
-                            result.markdown = this.parser.process(html, job.url);
+                            let markdown = this.parser.process(html, job.url);
+                            // Hook: onPageParsed
+                            if (hooks?.onPageParsed) {
+                                markdown = await hooks.onPageParsed(job.url, markdown);
+                            }
+                            result.markdown = markdown;
                         }
 
                         if (formats.includes('screenshot') && screenshot) {

@@ -4,15 +4,22 @@ import { isSafeUrl } from '../utils.js';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 
+export interface FetchHooks {
+    beforeFetch?: (url: string) => Promise<boolean | string>;
+    onPageFetched?: (url: string, html: string) => Promise<string>;
+}
+
 export interface FetchOptions {
     actions?: CdpAction[];
     screenshot?: boolean;
     formats?: ('markdown' | 'html' | 'screenshot')[];
+    hooks?: FetchHooks;
 }
 
 export interface FetchResult {
     html: string;
     screenshot?: Buffer;
+    actionResults?: Record<string, string>;
 }
 
 export class SmartFetcher {
@@ -28,10 +35,22 @@ export class SmartFetcher {
         await this.cdpBrowser.init();
     }
 
-    async fetch(url: string, retryCount: number = 0): Promise<string> {
+    async fetch(url: string, retryCount: number = 0, hooks?: FetchHooks): Promise<string> {
         if (!isSafeUrl(url)) {
             throw new Error(`SSRF Protection: Unsafe or local URL detected (${url}).`);
         }
+
+        // Hook: beforeFetch
+        if (hooks?.beforeFetch) {
+            const hookResult = await hooks.beforeFetch(url);
+            if (hookResult === false) {
+                throw new Error(`Fetch aborted by beforeFetch hook for ${url}`);
+            }
+            if (typeof hookResult === 'string') {
+                url = hookResult;
+            }
+        }
+
         try {
             console.log(`[SmartFetcher] Attempting fast HTTP GET for ${url} (attempt ${retryCount + 1})`);
             const response = await globalThis.fetch(url, {
@@ -45,7 +64,8 @@ export class SmartFetcher {
                 if (response.status === 403 || response.status === 503) {
                     console.log(`[SmartFetcher] Bot protection detected (${response.status}). Falling back to CDP.`);
                     await this.ensureInitialized();
-                    return await this.fetchWithCDP(url);
+                    const html = await this.fetchWithCDP(url);
+                    return hooks?.onPageFetched ? await hooks.onPageFetched(url, html) : html;
                 }
                 throw new Error(`HTTP Error: ${response.status}`);
             }
@@ -58,15 +78,21 @@ export class SmartFetcher {
                 const pdfBuffer = Buffer.from(arrayBuffer);
                 const pdfData = await pdf(pdfBuffer);
                 // Return PDF text as HTML-wrapped content for markdown conversion
-                return `<html><body><pre>${pdfData.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre></body></html>`;
+                const html = `<html><body><pre>${pdfData.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre></body></html>`;
+                return hooks?.onPageFetched ? await hooks.onPageFetched(url, html) : html;
             }
 
-            const html = await response.text();
+            let html = await response.text();
 
             if (this.needsRendering(html)) {
                 console.log(`[SmartFetcher] SPA detected. Falling back to CDP.`);
                 await this.ensureInitialized();
-                return await this.fetchWithCDP(url);
+                html = await this.fetchWithCDP(url);
+            }
+
+            // Hook: onPageFetched
+            if (hooks?.onPageFetched) {
+                html = await hooks.onPageFetched(url, html);
             }
 
             return html;
@@ -77,12 +103,13 @@ export class SmartFetcher {
                 const delay = this.retryDelay * Math.pow(2, retryCount);
                 console.log(`[SmartFetcher] Retrying in ${delay}ms...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
-                return this.fetch(url, retryCount + 1);
+                return this.fetch(url, retryCount + 1, hooks);
             }
             
             console.log(`[SmartFetcher] All retries failed, falling back to CDP.`);
             await this.ensureInitialized();
-            return await this.fetchWithCDP(url);
+            const html = await this.fetchWithCDP(url);
+            return hooks?.onPageFetched ? await hooks.onPageFetched(url, html) : html;
         }
     }
 
@@ -106,24 +133,43 @@ export class SmartFetcher {
     }
 
     async fetchWithOptions(url: string, options?: FetchOptions): Promise<FetchResult> {
+        const hooks = options?.hooks;
         const actions = options?.actions || [];
         const needsCDP = actions.length > 0 || options?.screenshot;
 
         if (!needsCDP) {
-            const html = await this.fetch(url);
+            const html = await this.fetch(url, 0, hooks);
             return { html };
+        }
+
+        // Hook: beforeFetch
+        if (hooks?.beforeFetch) {
+            const hookResult = await hooks.beforeFetch(url);
+            if (hookResult === false) {
+                throw new Error(`Fetch aborted by beforeFetch hook for ${url}`);
+            }
+            if (typeof hookResult === 'string') {
+                url = hookResult;
+            }
         }
 
         const session = await this.cdpBrowser.acquirePage();
         try {
             await this.cdpBrowser.navigate(session, url);
             
+            let actionResults: Record<string, string> | undefined;
             if (actions.length > 0) {
-                await this.cdpBrowser.executeActions(session, actions);
+                actionResults = await this.cdpBrowser.executeActions(session, actions);
             }
 
-            const html = await this.cdpBrowser.getDOM(session);
-            const result: FetchResult = { html };
+            let html = await this.cdpBrowser.getDOM(session);
+            
+            // Hook: onPageFetched
+            if (hooks?.onPageFetched) {
+                html = await hooks.onPageFetched(url, html);
+            }
+
+            const result: FetchResult = { html, ...(actionResults ? { actionResults } : {}) };
 
             if (options?.screenshot || options?.formats?.includes('screenshot')) {
                 const screenshot = await this.cdpBrowser.takeScreenshot(session);

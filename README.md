@@ -39,6 +39,48 @@ A lightweight, high-performance web scraping and crawling engine — a modern al
 
 ## Quick Start
 
+### For Agents - Auto-Install Script
+
+Copy-paste this into any agent session to auto-install and use AeroCrawl:
+
+```
+Read the AeroCrawl skill from https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/SKILL.md
+
+Then run these commands:
+1. Check if installed: aerocrawl --help
+2. If not installed, run:
+   Windows (PowerShell): git clone https://github.com/deviprasadshetty-dev/aerocrawl.git; cd aerocrawl; npm install; npm run build; npm link
+   Mac/Linux: git clone https://github.com/deviprasadshetty-dev/aerocrawl.git && cd aerocrawl && npm install && npm run build && npm link
+3. Verify: aerocrawl --help
+4. Use: aerocrawl https://example.com
+```
+
+### For Humans - Quick Install
+
+**Option 1: Use install scripts (Recommended)**
+```bash
+# Windows (PowerShell)
+iwr https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/install.ps1 -OutFile install.ps1; .\install.ps1
+
+# Mac/Linux
+curl -fsSL https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/install.sh -o install.sh && bash install.sh
+```
+
+**Option 2: Manual install**
+```powershell
+# Windows (PowerShell)
+git clone https://github.com/deviprasadshetty-dev/aerocrawl.git; cd aerocrawl; npm install; npm run build; npm link
+```
+```bash
+# Mac/Linux
+git clone https://github.com/deviprasadshetty-dev/aerocrawl.git && cd aerocrawl && npm install && npm run build && npm link
+```
+
+**Verify:**
+```bash
+aerocrawl --help
+```
+
 ### CLI (Zero-Server Mode)
 The easiest way to use AeroCrawl — no server setup required:
 
@@ -122,18 +164,6 @@ AeroCrawl is not published to the npm registry. Install directly from GitHub:
 - Node.js ≥ 18
 - Git
 - Chrome or Edge (CDP uses your system browser)
-
-### Quick Install Scripts
-
-**Windows (PowerShell):**
-```powershell
-git clone https://github.com/deviprasadshetty-dev/aerocrawl.git; cd aerocrawl; npm install; npm run build; npm link
-```
-
-**Mac/Linux (bash/zsh):**
-```bash
-git clone https://github.com/deviprasadshetty-dev/aerocrawl.git && cd aerocrawl && npm install && npm run build && npm link
-```
 
 ### Step-by-Step
 1. Clone the repo:

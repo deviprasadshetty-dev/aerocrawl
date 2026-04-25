@@ -13,7 +13,8 @@ export type CdpAction =
     | { type: 'waitForSelector'; selector: string; timeout?: number }
     | { type: 'wait'; ms: number }
     | { type: 'executeJS'; script: string }
-    | { type: 'screenshot'; format?: 'png' | 'jpeg'; quality?: number };
+    | { type: 'screenshot'; format?: 'png' | 'jpeg'; quality?: number }
+    | { type: 'scrape'; id: string };
 
 interface PageSession {
     client: any;
@@ -162,7 +163,8 @@ export class CDPBrowser extends EventEmitter {
         await session.client.Page.loadEventFired();
     }
 
-    async executeActions(session: PageSession, actions: CdpAction[]): Promise<void> {
+    async executeActions(session: PageSession, actions: CdpAction[]): Promise<Record<string, string>> {
+        const results: Record<string, string> = {};
         for (const action of actions) {
             try {
                 switch (action.type) {
@@ -209,7 +211,7 @@ export class CDPBrowser extends EventEmitter {
                         break;
                     case 'waitForSelector':
                         const timeout = action.timeout || 5000;
-                        const result = await session.client.Runtime.evaluate({
+                        const waitResult = await session.client.Runtime.evaluate({
                             expression: `
                                 new Promise((resolve, reject) => {
                                     const selector = ${JSON.stringify(action.selector)};
@@ -231,7 +233,7 @@ export class CDPBrowser extends EventEmitter {
                             `,
                             awaitPromise: true
                         });
-                        if (!result.result.value) {
+                        if (!waitResult.result.value) {
                             throw new Error(`Selector ${action.selector} not found within ${timeout}ms`);
                         }
                         break;
@@ -239,12 +241,22 @@ export class CDPBrowser extends EventEmitter {
                         await new Promise(r => setTimeout(r, action.ms));
                         break;
                     case 'executeJS':
-                        await session.client.Runtime.evaluate({
-                            expression: action.script
+                        const jsResult = await session.client.Runtime.evaluate({
+                            expression: action.script,
+                            returnByValue: true
                         });
+                        if (jsResult.result.value !== undefined) {
+                            // If it has a specific id or we just want to return it
+                            // For now, we don't have a way to name JS results in the action itself
+                            // But we could add it.
+                        }
+                        break;
+                    case 'scrape':
+                        const html = await this.getDOM(session);
+                        results[action.id] = html;
                         break;
                     case 'screenshot':
-                        // Handled separately
+                        // Handled separately or can be added to results as base64
                         break;
                 }
             } catch (err) {
@@ -252,6 +264,7 @@ export class CDPBrowser extends EventEmitter {
                 throw err;
             }
         }
+        return results;
     }
 
     async takeScreenshot(session: PageSession, options?: { format?: 'png' | 'jpeg'; quality?: number }): Promise<Buffer> {

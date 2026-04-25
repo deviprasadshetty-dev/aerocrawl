@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { SmartFetcher, type FetchOptions } from './fetcher/SmartFetcher.js';
 import { MarkdownPipeline } from './parser/MarkdownPipeline.js';
-import { CrawlManager } from './crawler/CrawlManager.js';
+import { CrawlManager, type CrawlHooks } from './crawler/CrawlManager.js';
 import { AIExtractor } from './extractor/AIExtractor.js';
 import { LLMClient } from './llm/LLMClient.js';
 import { CDPAgent, type AgentTask } from './agent/CDPAgent.js';
@@ -12,6 +12,7 @@ import type { CdpAction } from './browser/CDPBrowser.js';
 import fs from 'fs';
 import path from 'path';
 import 'dotenv/config';
+import { pathToFileURL } from 'url';
 
 function getLLMConfig(options: any) {
     if (!options.provider && !process.env.LLM_PROVIDER) return undefined;
@@ -46,6 +47,22 @@ function loadActions(actionsFile?: string): CdpAction[] {
         return JSON.parse(fs.readFileSync(actionsFile, 'utf-8'));
     } catch (err: any) {
         console.error(chalk.red(`Invalid actions file: ${err.message}`));
+        process.exit(1);
+    }
+}
+
+async function loadHooks(scriptPath?: string): Promise<CrawlHooks | undefined> {
+    if (!scriptPath) return undefined;
+    const fullPath = path.resolve(process.cwd(), scriptPath);
+    if (!fs.existsSync(fullPath)) {
+        console.error(chalk.red(`Hooks script not found: ${fullPath}`));
+        process.exit(1);
+    }
+    try {
+        const module = await import(pathToFileURL(fullPath).href);
+        return module.default || module;
+    } catch (err: any) {
+        console.error(chalk.red(`Failed to load hooks from ${scriptPath}: ${err.message}`));
         process.exit(1);
     }
 }
@@ -88,6 +105,7 @@ PROGRAM
     .option('--batch <file>', 'File with URLs to batch scrape (JSON array or line-by-line)')
     .option('--goal <text>', 'Goal description for agent mode')
     .option('--max-steps <number>', 'Max steps for agent mode', '10')
+    .option('--script <path>', 'Path to a JavaScript file with CrawlHooks')
     .option('--generate-mcp-config', 'Generate MCP config for Cursor/KiloCode')
     .action(async (url, options) => {
         // Generate MCP config if requested
@@ -130,6 +148,8 @@ PROGRAM
             return;
         }
 
+        const hooks = await loadHooks(options.script);
+
         if (mode === 'batch') {
             const urls = options.batch ? loadUrls(options.batch) : (url ? [url] : []);
             if (urls.length === 0) {
@@ -150,7 +170,8 @@ PROGRAM
                 const batchId = await crawlManager.startBatchScrape({
                     urls,
                     actions,
-                    formats
+                    formats,
+                    ...(hooks ? { hooks } : {})
                 });
 
                 while (true) {
@@ -199,13 +220,23 @@ PROGRAM
                     formats.push('screenshot');
                 }
 
-                const fetchOptions: FetchOptions = { actions, formats };
-                const { html, screenshot } = await fetcher.fetchWithOptions(url, fetchOptions);
+                const fetchOptions: FetchOptions = { actions, formats, ...(hooks ? { hooks } : {}) };
+                const { html, screenshot, actionResults } = await fetcher.fetchWithOptions(url, fetchOptions);
 
                 const result: any = { url };
 
+                if (actionResults) {
+                    result.actionResults = actionResults;
+                }
+
                 if (formats.includes('html')) result.html = html;
-                if (formats.includes('markdown')) result.markdown = parser.process(html, url);
+                
+                let markdown = parser.process(html, url);
+                if (hooks?.onPageParsed) {
+                    markdown = await hooks.onPageParsed(url, markdown);
+                }
+                if (formats.includes('markdown')) result.markdown = markdown;
+
                 if (formats.includes('screenshot') && screenshot) {
                     result.screenshot = screenshot.toString('base64');
                 }
@@ -237,8 +268,11 @@ PROGRAM
                 const fetcher = new SmartFetcher();
                 const parser = new MarkdownPipeline();
                 await fetcher.init();
-                const html = await fetcher.fetch(url);
-                const markdown = parser.process(html, url);
+                const html = await fetcher.fetch(url, 0, hooks);
+                let markdown = parser.process(html, url);
+                if (hooks?.onPageParsed) {
+                    markdown = await hooks.onPageParsed(url, markdown);
+                }
                 fetcher.close();
                 const result = await extractor.extract(markdown);
                 const output = JSON.stringify(result.data, null, 2);
@@ -372,7 +406,8 @@ PROGRAM
                     extract: options.extract || false,
                     llmConfig,
                     actions,
-                    formats
+                    formats,
+                    ...(hooks ? { hooks } : {})
                 });
                 console.log(chalk.green(`Crawl started: ${crawlId}`));
 
