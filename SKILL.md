@@ -12,29 +12,31 @@ AeroCrawl is a lightweight, high-performance web scraping and crawling engine. I
 
 ---
 
-## Quick Start for Agents (Copy-Paste This)
+## Integration Directives
+
+You have two ways to utilize this tool depending on the user's request:
+
+### PATH A: CLI Execution (Direct Use)
+If the user asks you to scrape, crawl, or extract from a site *right now* in this conversation, execute the CLI commands directly in your terminal tool:
 
 ```
-Read the full AeroCrawl skill from:
-https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/SKILL.md
+STEP 1 - Install if needed:
+  Windows: iwr https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/install.ps1 -OutFile install.ps1; .\install.ps1
+  Mac/Linux: curl -fsSL https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/install.sh -o install.sh && bash install.sh
 
-Then execute these commands in order:
-
-STEP 1 - Check if already installed:
-  aerocrawl --help
-
-STEP 2 - If step 1 failed, install:
-  Windows (PowerShell):
-    iwr https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/install.ps1 -OutFile install.ps1; .\install.ps1
-  Mac/Linux:
-    curl -fsSL https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/install.sh -o install.sh && bash install.sh
-
-STEP 3 - Verify installation:
-  aerocrawl --help
-
-STEP 4 - Use it:
+STEP 2 - Run directly:
   aerocrawl https://example.com
 ```
+
+### PATH B: MCP Server Installation (Tool Extension)
+If the user asks you to "install AeroCrawl", "add it to Cursor/KiloCode", or permanently extend your available tools, generate the MCP configuration:
+
+```
+STEP 1 - Install if needed (same as above)
+STEP 2 - Generate MCP Config:
+  aerocrawl --generate-mcp-config
+```
+*Note: Your host application will run the server automatically in the background. DO NOT run `aerocrawl -m mcp` in your terminal tool, as it will hang indefinitely.*
 
 ---
 
@@ -142,7 +144,7 @@ aerocrawl "search query" -m search                   # search the web (zero exte
 aerocrawl <url> --screenshot                         # capture screenshot
 aerocrawl --batch urls.txt --output results.json     # batch scrape from file
 aerocrawl -m serve                                   # start API server (port 3000)
-aerocrawl -m mcp                                     # start MCP server for Cursor/AI tools
+aerocrawl --generate-mcp-config                      # generate MCP config for Cursor/AI tools
 ```
 
 ### Mode Selection Guide
@@ -275,9 +277,11 @@ aerocrawl --batch-status BATCH_ID
 
 ## MCP Server Setup (For Cursor and AI Tools)
 
-### Start MCP Server
+The AI assistant will start the MCP server automatically when needed. You do not need to keep it running manually in your terminal.
+
+### Auto-Generate Config
 ```powershell
-aerocrawl -m mcp
+aerocrawl --generate-mcp-config
 ```
 
 ### Configure in Cursor
@@ -570,7 +574,7 @@ aerocrawl https://example.com -m extract              # structured data
 aerocrawl https://example.com -m crawl               # whole site
 aerocrawl "query" -m search                          # web search
 aerocrawl https://example.com --goal "do something"  # AI agent
-aerocrawl -m mcp                                     # MCP server
+aerocrawl --generate-mcp-config                      # generate MCP config
 ```
 
 ---

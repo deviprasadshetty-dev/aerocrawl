@@ -125,6 +125,7 @@ PROGRAM
             );
             
             console.log(chalk.green('✓ Generated .cursor/mcp.json'));
+            console.log(chalk.gray('  The AI assistant will now run this server automatically when needed.'));
             console.log(chalk.gray('  Add to Cursor: Settings → MCP → Add Server'));
             console.log(chalk.gray('  Config: ' + JSON.stringify(cursorConfig, null, 2)));
             

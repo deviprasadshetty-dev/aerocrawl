@@ -39,21 +39,29 @@ A lightweight, high-performance web scraping and crawling engine — a modern al
 
 ## Quick Start
 
-### For Agents - Auto-Install Script
+### For Agents - Quick Start
 
-Copy-paste this into any agent session to auto-install and use AeroCrawl:
+As an AI agent, you can use AeroCrawl in two ways:
 
+**PATH A: Use Directly via CLI**
+If you need to scrape something immediately in the terminal:
+```bash
+# 1. Install
+Windows: iwr https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/install.ps1 -OutFile install.ps1; .\install.ps1
+Mac/Linux: curl -fsSL https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/install.sh -o install.sh && bash install.sh
+
+# 2. Scrape
+aerocrawl https://example.com
 ```
-Read the AeroCrawl skill from https://raw.githubusercontent.com/deviprasadshetty-dev/aerocrawl/main/SKILL.md
 
-Then run these commands:
-1. Check if installed: aerocrawl --help
-2. If not installed, run:
-   Windows (PowerShell): git clone https://github.com/deviprasadshetty-dev/aerocrawl.git; cd aerocrawl; npm install; npm run build; npm link
-   Mac/Linux: git clone https://github.com/deviprasadshetty-dev/aerocrawl.git && cd aerocrawl && npm install && npm run build && npm link
-3. Verify: aerocrawl --help
-4. Use: aerocrawl https://example.com
+**PATH B: Install as MCP Server for Yourself**
+To add AeroCrawl's tools natively to your own context window (like Cursor or KiloCode):
+```bash
+# 1. Install (same as above)
+# 2. Generate configuration
+aerocrawl --generate-mcp-config
 ```
+*(The AI editor will run the server automatically. No need to keep it running in the terminal).*
 
 ### For Humans - Quick Install
 
@@ -111,14 +119,14 @@ aerocrawl --batch urls.txt --output results.json
 ```
 
 ### MCP Server (AI Tool Integration)
-Integrate with Cursor, KiloCode, and other MCP-compatible tools:
+Integrate with Cursor, KiloCode, and other MCP-compatible tools. The AI assistant will run the server automatically when needed—you do not need to run it manually in your terminal.
 
+**Auto-Generate Configuration:**
 ```bash
-# Start the MCP server
-aerocrawl -m mcp
+aerocrawl --generate-mcp-config
 ```
 
-**MCP Configuration JSON:**
+**Manual MCP Configuration JSON:**
 
 Add this to your MCP settings file:
 
